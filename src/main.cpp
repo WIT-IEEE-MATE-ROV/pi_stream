@@ -1,44 +1,28 @@
-#include<iostream>
-#include<print>
-#include<string>
-#include<zmq.hpp>
-#include <zmq_addon.hpp>
+#include <iostream>
+#include <print>
+#include <string>
+
+#include <chrono>
+#include <thread>
+// #include <opencv2/opencv.hpp>
+
+#include "udpclient.h"
 
 
 using namespace std;
 
 int main()
 {
-    zmq::context_t ctx;
-    zmq::socket_t sock1(ctx, zmq::socket_type::push);
-    zmq::socket_t sock2(ctx, zmq::socket_type::pull);
-
-    sock1.bind("tcp://127.0.0.1:*");
-    const std::string last_endpoint =
-        sock1.get(zmq::sockopt::last_endpoint);
-    std::cout << "Connecting to "
-              << last_endpoint << std::endl;
-    sock2.connect(last_endpoint);
-
-    std::array<zmq::const_buffer, 2> send_msgs = {
-        zmq::str_buffer("foo"),
-        zmq::str_buffer("bar!")
-    };
-    if (!zmq::send_multipart(sock1, send_msgs))
-        return 1;
-
-    std::vector<zmq::message_t> recv_msgs;
-    const auto ret = zmq::recv_multipart(
-        sock2, std::back_inserter(recv_msgs));
+    const char *msg = "Test\0";
+  while (true)
+  {
+  
+    bool ret = udpSend(msg);
     if (!ret)
-        return 1;
-    std::cout << "Got " << *ret << " messages" << std::endl;
-    
-    for (auto & message : recv_msgs)
-    {
-      std::cout << "Message: " << message.to_string() << std::endl; 
-    }
-    
+      std::printf("Failed to send message");
 
-    return 0;
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::printf("Message %s sent\n", msg);
+  }
+  return 0;
 }
