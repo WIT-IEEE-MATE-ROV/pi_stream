@@ -2,10 +2,11 @@
 #ifndef CLIENT_H
 #define CLIENT_H
 
-#define HOSTNAME "127.0.0.1"
-#define PORT 8080
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 std::string getCurrentTimestamp();
-bool udpSend(const char *msg);
+void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex, int width, int height);
 
 #endif
