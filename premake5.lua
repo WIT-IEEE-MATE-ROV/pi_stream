@@ -1,6 +1,8 @@
 -- premake5.lua
 workspace "pi_stream"
+   architecture "x64"
    configurations { "Debug", "Release" }
+   platforms {"x64", "ARM", "ARM64" } 
 
 project "pi_stream"
    kind "ConsoleApp"
@@ -24,6 +26,16 @@ project "pi_stream"
       "opencv_highgui",
       "opencv_videoio",
    }
+
+   filter "platforms:x64"
+      architecture "x64"
+
+   filter "platforms:ARM"
+      architecture "ARM"
+
+   filter "platforms:ARM64"
+      architecture "ARM64"
+
 
    filter "configurations:Debug"
       defines { "DEBUG" }
