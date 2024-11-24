@@ -1,5 +1,4 @@
 #include <iostream>
-#include <print>
 #include <string>
 #include <ctime>
 #include <chrono>

@@ -8,7 +8,7 @@ RPI zeros UDP client video streamer for WUROV
 **Install dependencies**
 
 ```bash
-$ sudo apt install cmake lua5.4 v4l-utils gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+$ sudo apt install cmake lua5.4 g++ libopencv-dev v4l-utils gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 ```
 
 **clone this repo**
@@ -19,9 +19,9 @@ $ git clone https://github.com/WIT-IEEE-MATE-ROV/pi_stream.git
 
 
 
-**Build opencv**
+**Build opencv (if needed)**
 
-Inorder to build this application you will **need** to [build opencv from source](https://docs.opencv.org/4.x/d7/d9f/tutorial_linux_install.html). Once you have build opencv you should locate the headder files in `/usr/include/opencv4/opencv2`
+Inorder to build this application you may need to [build opencv from source](https://docs.opencv.org/4.x/d7/d9f/tutorial_linux_install.html). Once you have build opencv or you have installed `libopencv-dev` you should locate the headder files in `/usr/include/opencv4/opencv2`
 
 **Install Premake**
 
