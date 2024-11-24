@@ -11,18 +11,18 @@ project "pi_stream"
    files { "src/**.h", "src/**.hpp", "src/**.cpp", "include/**.h" }
 
    includedirs { 
-      "/usr/include/opencv4/opencv2/",
+      "/usr/include/opencv4/",
       "/usr/include/",
       "include/"
    }
    
    links {
       "opencv_core",
+      "opencv_imgproc",
+      "opencv_imgcodecs",
+      "opencv_features2d",
       "opencv_highgui",
       "opencv_videoio",
-      -- "zmq",
-      -- "zmq_utils"
-      -- "zmq_addon"
    }
 
    filter "configurations:Debug"
