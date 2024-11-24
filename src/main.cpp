@@ -1,28 +1,24 @@
 #include <iostream>
 #include <print>
 #include <string>
-
+#include <ctime>
 #include <chrono>
 #include <thread>
-// #include <opencv2/opencv.hpp>
-
+#include <opencv2/opencv.hpp>
 #include "udpclient.h"
-
 
 using namespace std;
 
 int main()
 {
-    const char *msg = "Test\0";
-  while (true)
-  {
-  
-    bool ret = udpSend(msg);
-    if (!ret)
-      std::printf("Failed to send message");
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    std::printf("Message %s sent\n", msg);
-  }
+  std::string ipAddress = "127.0.0.1"; // Replace with the receiver's IP address
+  int port = 8080;                     // Replace with the desired UDP port
+  int cameraIndex = 0;                 // Default camera index
+
+
+  // I have to set resloution to 320x180 rn so frame can fit in UDP packet 
+  streamVideoOverUDP(ipAddress, port, cameraIndex, 320, 180);
+
   return 0;
 }
