@@ -11,8 +11,8 @@ using namespace std;
 int main()
 {
 
-  std::string ipAddress = "127.0.0.1"; // Replace with the receiver's IP address
-  int port = 8080;                     // Replace with the desired UDP port
+  std::string ipAddress = "10.199.98.181"; // Replace with the receiver's IP address
+  int port = 12345;                     // Replace with the desired UDP port
   int cameraIndex = 0;                 // Default camera index
 
 

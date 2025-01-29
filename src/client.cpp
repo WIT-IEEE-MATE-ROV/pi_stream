@@ -42,15 +42,15 @@ void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex,
         return;
     }
 
-    std::cout << "Resolution set before cat.get(): " << width << "x" << height << std::endl;
+    std::cout << "Resolution set before cap.get(): " << width << "x" << height << std::endl;
 
     // Set resloution
     cap.set(cv::CAP_PROP_FRAME_WIDTH, width);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, height);
-    int width_t = (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
-    int height_t = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+    int width_cap = (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
+    int height_cap = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
 
-    std::cout << "Resolution set after cat.get(): " << width_t << "x" << height_t << std::endl;
+    std::cout << "Resolution set after cap.get(): " << width_cap << "x" << height_cap << std::endl;
 
     // init socket
     int udpSocket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -71,10 +71,11 @@ void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex,
         return;
     }
 
-    const int maxPacketSize = (width_t * height_t) + 1;
+    const int maxPacketSize = (width_cap * height_cap) + 1;
+    std::cout << "Max packet size = " << maxPacketSize << std::endl;
     std::vector<uchar> buffer;
     cv::Mat frame;
-
+    std::string hellostr = "Wassup\n";
     while (true)
     {
         cap >> frame;
@@ -90,6 +91,8 @@ void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex,
             break;
         }
 
+	// cv::imwrite("test.jpg", frame);
+
         // Make sure frame fits into UDP packet
         // TODO - Chunk data for larger resloutions.
         if (buffer.size() > maxPacketSize)
@@ -98,24 +101,19 @@ void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex,
             continue;
         }
 
+
+
         // Send frame over UDP
-        ssize_t sentBytes = sendto(udpSocket, buffer.data(), buffer.size(), 0,
-                                   (sockaddr *)(&destAddr), sizeof(destAddr));
-        std::cout << "Bytes send " << sentBytes << std::endl;
+        ssize_t sentBytes = sendto(udpSocket, buffer.data(), buffer.size(), 0, (sockaddr *)(&destAddr), sizeof(destAddr));
+	// ssize_t sentBytes = sendto(udpSocket, hellostr.c_str(), hellostr.size() + 1, 0, (sockaddr *)(&destAddr), sizeof(destAddr));
+        std::cout << "Bytes sent " << sentBytes << std::endl;
         if (sentBytes < 0)
         {
             std::cerr << "Error: Failed to send frame! " << strerror(errno) << std::endl;
             break;
         }
-
-        // ESC to exit
-        cv::imshow("Camera Feed", frame);
-        if (cv::waitKey(1) == 27)
-        { 
-            break;
-        }
     }
     cap.release();
     close(udpSocket);
-    cv::destroyAllWindows();
+
 }
