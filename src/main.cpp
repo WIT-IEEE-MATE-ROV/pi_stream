@@ -16,8 +16,8 @@ int main()
   int cameraIndex = 0;                 // Default camera index
 
 
-  // I have to set resloution to 320x180 rn so frame can fit in UDP packet 
-  streamVideoOverUDP(ipAddress, port, cameraIndex, 320, 180);
+  // I have to set resloution to 320x180 rn so frame can fit in UDP packet
+  streamVideoOverUDP(ipAddress, port, cameraIndex, 1920, 1080);
 
   return 0;
 }
