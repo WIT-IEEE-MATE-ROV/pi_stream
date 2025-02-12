@@ -58,3 +58,11 @@ $ premake5 gmake premake5.lua
 $ make
 #$ make help
 ```
+
+## Docker Commands
+Pretty sure you need to make some multi-platform builder or something idk look it up.
+### Build
+`docker buildx build --platform linux/arm64/v8 -t pi_stream:arm64 . --load`
+### Run
+`docker run --platform linux/arm64/v8 -d --cap-add sys_ptrace -p127.0.0.1:2222:22 -it pi_stream:arm64 bash`
+
