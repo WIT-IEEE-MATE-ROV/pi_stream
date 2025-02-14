@@ -33,7 +33,7 @@ CameraSession::CameraSession(CameraManager *cm,
 			     const std::string &cameraId,
 			     unsigned int cameraIndex,
 			     const OptionsParser::Options &options)
-	: options_(options), cameraIndex_(cameraIndex), last_(0),
+	: options_(options), settings_{}, cameraIndex_(cameraIndex), last_(0),
 	  queueCount_(0), captureCount_(0), captureLimit_(0),
 	  printMetadata_(false)
 {
@@ -148,6 +148,122 @@ CameraSession::CameraSession(CameraManager *cm,
 	}
 
 	config_ = std::move(config);
+
+	captureLimit_ = options_[OptCapture].toInteger();
+	printMetadata_ = options_.isSet(OptMetadata);
+}
+
+CameraSession::CameraSession(CameraManager *cm,
+	const std::string &cameraId,
+	unsigned int cameraIndex,
+	const CameraSessionSettings &settings)
+	  : options_{}, settings_(settings), cameraIndex_(cameraIndex), last_(0),
+	  queueCount_(0), captureCount_(0), captureLimit_(0),
+	  printMetadata_(false)
+{
+	char *endptr;
+	unsigned long index = strtoul(cameraId.c_str(), &endptr, 10);
+
+	if (*endptr == '\0' && index > 0) {
+		auto cameras = cm->cameras();
+		if (index <= cameras.size())
+			camera_ = cameras[index - 1];
+	}
+
+	if (!camera_)
+		camera_ = cm->get(cameraId);
+
+	if (!camera_) {
+		std::cerr << "Camera " << cameraId << " not found" << std::endl;
+		return;
+		}
+
+	if (camera_->acquire()) {
+		std::cerr << "Failed to acquire camera " << cameraId
+		<< std::endl;
+		return;
+	}
+
+	std::vector<StreamRole> roles = settings.roles;
+
+	std::unique_ptr<CameraConfiguration> config = camera_->generateConfiguration(roles);
+	if (!config || config->size() != roles.size()) {
+		std::cerr << "Failed to get default stream configuration"
+		<< std::endl;
+		return;
+	}
+
+	config->orientation = settings.orientation.value_or(config->orientation);
+
+
+
+	/* Apply configuration if explicitly requested. */
+	// if (StreamKeyValueParser::updateConfiguration(config.get(), options_[OptStream])) {
+	// 	std::cerr << "Failed to update configuration" << std::endl;
+	// 	return;
+	// }
+	libcamera::StreamConfiguration &streamConfig = config->at(0);
+	streamConfig.size = settings.size.value_or(streamConfig.size);
+	streamConfig.pixelFormat = settings.pixelFormat.value_or(streamConfig.pixelFormat);
+	streamConfig.colorSpace = settings.colorSpace;
+
+	// bool strictFormats = options_.isSet(OptStrictFormats);
+	bool strictFormats = settings.strictFormats;
+
+	captureLimit_ = settings.captureLimit.value_or(captureLimit_);
+	printMetadata_ = settings.printMetadata;
+
+	#ifdef HAVE_KMS
+	if (options_.isSet(OptDisplay)) {
+	if (options_.isSet(OptFile)) {
+	std::cerr << "--display and --file options are mutually exclusive"
+		<< std::endl;
+	return;
+	}
+
+	if (roles.size() != 1) {
+	std::cerr << "Display doesn't support multiple streams"
+		<< std::endl;
+	return;
+	}
+
+	if (roles[0] != StreamRole::Viewfinder) {
+	std::cerr << "Display requires a viewfinder stream"
+		<< std::endl;
+	return;
+	}
+	}
+	#endif
+
+	// if (options_.isSet(OptCaptureScript)) {
+	// 	std::string scriptName = options_[OptCaptureScript].toString();
+	// 	script_ = std::make_unique<CaptureScript>(camera_, scriptName);
+	// 	if (!script_->valid()) {
+	// 		std::cerr << "Invalid capture script '" << scriptName
+	// 			<< "'" << std::endl;
+	// 		return;
+	// 	}
+	// }
+
+	switch (config->validate()) {
+		case CameraConfiguration::Valid:
+			break;
+
+		case CameraConfiguration::Adjusted:
+			if (strictFormats) {
+				std::cout << "Adjusting camera configuration disallowed by --strict-formats argument"
+					<< std::endl;
+				return;
+			}
+			std::cout << "Camera configuration adjusted" << std::endl;
+			break;
+
+		case CameraConfiguration::Invalid:
+			std::cout << "Camera configuration invalid" << std::endl;
+			return;
+	}
+
+	config_ = std::move(config);
 }
 
 CameraSession::~CameraSession()
@@ -236,9 +352,8 @@ int CameraSession::start()
 
 	queueCount_ = 0;
 	captureCount_ = 0;
-	captureLimit_ = options_[OptCapture].toInteger();
-	printMetadata_ = options_.isSet(OptMetadata);
 
+	std::cout << "Configuring" << std::endl;
 	ret = camera_->configure(config_.get());
 	if (ret < 0) {
 		std::cout << "Failed to configure camera" << std::endl;
@@ -264,7 +379,23 @@ int CameraSession::start()
 		sink_ = std::make_unique<SDLSink>();
 #endif
 
-	if (options_.isSet(OptFile)) {
+	
+	if (settings_.outFile.has_value()) {
+		const std::string &fileStr = settings_.outFile.value();
+
+		std::unique_ptr<FileSink> sink =
+			std::make_unique<FileSink>(camera_.get(), streamNames_);
+		
+		if (!fileStr.empty()) {
+			ret = sink->setFilePattern(fileStr);
+			if (ret) {
+				std::cout << "Failed to set file pattern" << std::endl;
+				return ret;
+			}
+		}
+
+		sink_ = std::move(sink);
+	} else if (options_.isSet(OptFile)) {
 		std::unique_ptr<FileSink> sink =
 			std::make_unique<FileSink>(camera_.get(), streamNames_);
 

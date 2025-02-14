@@ -4,10 +4,16 @@
 #include <iomanip>
 #include <sstream>
 #include <unistd.h>
-#include <string.h>
+#include <cstring>
 #include <vector>
-#include <stdlib.h>
-#include <errno.h>
+#include <cstdlib>
+#include <cerrno>
+#include <optional>
+#include <csignal>
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -23,20 +29,74 @@ extern "C"
 }
 
 #include "udpclient.h"
+#include "apps/cam/camera_session.h"
+#include "apps/common/event_loop.h"
 
-// To Timestamp each frame
-std::string getCurrentTimestamp()
-{
-    auto now = std::chrono::system_clock::now();
-    time_t time = std::chrono::system_clock::to_time_t(now);
-    std::cout << "Time: " << time << std::endl;
-    // Format the time
-    std::string time_string = ctime(&time);
-    return time_string;
+
+using namespace libcamera;
+
+
+void Client::captureDone() {
+    std::cout << "Capture done" << std::endl;
+    done = true;
+    evloop.exit();
 }
 
-void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex, int width, int height)
+void Client::run() {
+    libcamera::CameraManager cm;
+    if (cm.start()) {
+        printf("Couldn't start camera manager\n");
+        return;
+    }
+
+    CameraSession::CameraSessionSettings settings;
+    settings.roles.push_back(libcamera::StreamRole::Viewfinder);
+    settings.captureLimit = 1;
+    settings.orientation = libcamera::Orientation::Rotate180;
+    settings.outFile = "stream_test.ppm";
+    settings.pixelFormat = libcamera::PixelFormat::fromString("BGR888");
+
+
+    CameraSession session(&cm, "1", 1, settings);
+    if (!session.isValid()) {
+        std::cout << "Session invalid" << std::endl;
+        return;
+    }
+
+    std::cout << "Session valid\n";
+    std::cout << "Using camera " << session.camera()->id() << " as cam" << 1 << std::endl;
+
+    session.captureDone.connect(this, &Client::captureDone);
+
+    if (session.start()) {
+        std::cout << "Failed to start camera session" << std::endl;
+        cm.stop();
+        return;
+    }
+    std::cout << "Session started" << std::endl;
+    
+    evloop.exec();
+
+    std::cout << "Stopping" << std::endl;
+    session.stop();
+    cm.stop();
+}
+
+void Client::signalHandler(int signal) {
+    std::cout << "Signal Exiting" << std::endl;
+    done = true;
+    evloop.exit();
+}
+
+void Client::streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex, int width, int height)
 {
+    // struct sigaction sa{};
+    // sa.sa_handler = &Client::signalHandler;
+    // sigaction(SIGINT, &sa, nullptr);
+    run();
+    std::cout << "Exiting..." << std::endl;
+    return;
+
     if (width <= 0 || height <= 0)
     {
         std::cerr << "Frame size too small\n";
@@ -105,7 +165,7 @@ void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex,
             break;
         }
 
-	// cv::imwrite("test.jpg", frame);
+    // cv::imwrite("test.jpg", frame);
 
         // Make sure frame fits into UDP packet
         // TODO - Chunk data for larger resloutions.
@@ -119,7 +179,7 @@ void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex,
 
         // Send frame over UDP
         ssize_t sentBytes = sendto(udpSocket, buffer.data(), buffer.size(), 0, (sockaddr *)(&destAddr), sizeof(destAddr));
-	// ssize_t sentBytes = sendto(udpSocket, hellostr.c_str(), hellostr.size() + 1, 0, (sockaddr *)(&destAddr), sizeof(destAddr));
+    // ssize_t sentBytes = sendto(udpSocket, hellostr.c_str(), hellostr.size() + 1, 0, (sockaddr *)(&destAddr), sizeof(destAddr));
         std::cout << "Bytes sent " << sentBytes << std::endl;
         if (sentBytes < 0)
         {

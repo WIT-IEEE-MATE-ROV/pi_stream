@@ -23,10 +23,23 @@ include_directories(
     ${LIBEVENT_INCLUDE_DIRS}
     ${YAML_INCLUDE_DIRS}
     src/apps/cam
+    src
 )
 
 # Add executables
-add_executable(Stream src/main.cpp src/client.cpp)
+add_executable(StreamOld
+    src/main.cpp 
+    src/client.cpp
+    src/apps/common/options.cpp    
+    src/apps/common/event_loop.cpp
+    src/apps/cam/camera_session.cpp  # Add if you have this file
+    src/apps/cam/file_sink.cpp
+    src/apps/cam/frame_sink.cpp
+    src/apps/cam/capture_script.cpp
+    src/apps/common/ppm_writer.cpp
+    src/apps/common/image.cpp
+    src/apps/common/stream_options.cpp  # Add if you have this file
+)
 
 add_executable(Example 
     src/apps/cam/main.cpp
@@ -42,17 +55,39 @@ add_executable(Example
     src/apps/common/stream_options.cpp  # Add if you have this file
 )
 
-target_link_libraries(Stream PRIVATE
+add_executable(Stream
+    src/server.cpp
+    src/apps/common/options.cpp    
+    src/apps/common/event_loop.cpp
+    src/apps/cam/camera_session.cpp  # Add if you have this file
+    src/apps/cam/file_sink.cpp
+    src/apps/cam/frame_sink.cpp
+    src/apps/cam/capture_script.cpp
+    src/apps/common/ppm_writer.cpp
+    src/apps/common/image.cpp
+    src/apps/common/stream_options.cpp  # Add if you have this file
+)
+
+target_link_libraries(StreamOld PRIVATE
+    ${LIBCAMERA_LIBRARIES}
+    ${LIBEVENT_LIBRARIES}
     ${OpenCV_LIBS}
     ${AVCODEC_LIBRARIES}
     ${AVFORMAT_LIBRARIES}
     ${AVUTIL_LIBRARIES}
+    ${YAML_LIBRARIES}
+    pthread  # Explicitly link pthread
+)
+
+target_link_libraries(Stream PRIVATE
     ${LIBCAMERA_LIBRARIES}
     ${LIBEVENT_LIBRARIES}
-    ${LIBCAMERA_BASE_LIB}
-    ${LIBCAMERA_LIB}
-    ${LIBCAMERA_APP_LIB}
+    ${OpenCV_LIBS}
+    ${AVCODEC_LIBRARIES}
+    ${AVFORMAT_LIBRARIES}
+    ${AVUTIL_LIBRARIES}
     ${YAML_LIBRARIES}
+    pthread  # Explicitly link pthread
 )
 
 # Link libraries
@@ -68,5 +103,5 @@ target_link_libraries(Example PRIVATE
 )
 
 # Set RPATH if needed
-target_link_options(Example PRIVATE "-Wl,-rpath=/usr/lib/aarch64-linux-gnu")
-
+# target_link_options(Example PRIVATE "-Wl,-rpath=/usr/lib/aarch64-linux-gnu")
+# target_link_options(Stream PRIVATE "-Wl,-rpath=/usr/lib/aarch64-linux-gnu")
