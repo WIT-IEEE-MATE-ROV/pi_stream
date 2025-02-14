@@ -1,12 +1,17 @@
 #pragma once
-#ifndef CLIENT_H
-#define CLIENT_H
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include <cstring>
+#include "apps/common/event_loop.h"
 
-std::string getCurrentTimestamp();
-void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex, int width, int height);
+class Client {
+public:
+    bool done = false;
+    EventLoop evloop;
 
-#endif
+    void captureDone();
+    void streamVideoOverUDP(const std::string &ipAddress, int port, int cameraIndex, int width, int height);
+
+private:
+    void run();
+    void signalHandler(int signal);
+};

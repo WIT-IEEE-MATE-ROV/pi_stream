@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
+#include <optional>
 
 #include <libcamera/base/signal.h>
 
@@ -20,6 +21,7 @@
 #include <libcamera/framebuffer_allocator.h>
 #include <libcamera/request.h>
 #include <libcamera/stream.h>
+#include <libcamera/geometry.h>
 
 #include "../common/options.h"
 
@@ -29,9 +31,27 @@ class FrameSink;
 class CameraSession
 {
 public:
+
+	struct CameraSessionSettings {
+		std::optional<libcamera::Orientation> orientation = std::nullopt;
+		std::optional<std::string> outFile = std::nullopt;
+		std::optional<int> captureLimit = std::nullopt;
+		std::optional<libcamera::Size> size = std::nullopt;
+		std::optional<libcamera::PixelFormat> pixelFormat = std::nullopt;
+		std::optional<libcamera::ColorSpace> colorSpace = std::nullopt;
+
+		std::vector<libcamera::StreamRole> roles;
+		bool strictFormats = false;
+		bool printMetadata = false;
+	};
+
 	CameraSession(libcamera::CameraManager *cm,
 		      const std::string &cameraId, unsigned int cameraIndex,
 		      const OptionsParser::Options &options);
+	CameraSession(libcamera::CameraManager *cm,
+	const std::string &cameraId,
+	unsigned int cameraIndex,
+	const CameraSessionSettings &settings);
 	~CameraSession();
 
 	bool isValid() const { return config_ != nullptr; }
@@ -58,6 +78,7 @@ private:
 	void sinkRelease(libcamera::Request *request);
 
 	const OptionsParser::Options &options_;
+	const CameraSessionSettings &settings_;
 	std::shared_ptr<libcamera::Camera> camera_;
 	std::unique_ptr<libcamera::CameraConfiguration> config_;
 
