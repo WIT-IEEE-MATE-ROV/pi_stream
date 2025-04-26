@@ -148,33 +148,78 @@ public:
 
         std::cout << "Acquired" << std::endl;
 
-        std::unique_ptr<libcamera::CameraConfiguration> config = camera->generateConfiguration({libcamera::StreamRole::Raw});
+        std::unique_ptr<libcamera::CameraConfiguration> config = camera->generateConfiguration({libcamera::StreamRole::Viewfinder});
         const libcamera::StreamFormats &formats = config->at(0).formats();
+
+        config->orientation = libcamera::Orientation::Rotate180;
+        for (int i = 0; i < config->size(); i++) {
+            auto &cfg = config->at(i);
+            cfg.pixelFormat = libcamera::PixelFormat::fromString("BGR888");
+        }
+
 
         libcamera::logSetLevel("RPI", "ERROR");
         libcamera::logSetLevel("Camera", "ERROR");
 
-        std::vector<SensorMode> sensor_modes;
-        for (const auto &pxf : formats.pixelformats())
-        {
-            for (const auto &size : formats.sizes(pxf))
-            {
-                double framerate = 0;
-                SensorMode sensorMode(size, pxf, 0);
-                config->at(0).size = size;
-                config->at(0).pixelFormat = pxf;
-                config->sensorConfig = libcamera::SensorConfiguration();
-                config->sensorConfig->outputSize = size;
-                config->sensorConfig->bitDepth = sensorMode.depth();
-                config->validate();
-                camera->configure(config.get());
-                auto fd_ctrl = camera->controls().find(&libcamera::controls::FrameDurationLimits);
-                framerate = 1.0e6 / fd_ctrl->second.min().get<int64_t>();
+        // std::vector<SensorMode> sensor_modes;
+        // for (const auto &pxf : formats.pixelformats())
+        // {
+        //     for (const auto &size : formats.sizes(pxf))
+        //     {
+        //         double framerate = 0;
+        //         SensorMode sensorMode(size, pxf, 0);
+        //         config->at(0).size = size;
+        //         config->at(0).pixelFormat = pxf;
+        //         config->sensorConfig = libcamera::SensorConfiguration();
+        //         config->sensorConfig->outputSize = size;
+        //         config->sensorConfig->bitDepth = sensorMode.depth();
+        //         config->validate();
+        //         camera->configure(config.get());
+        //         auto fd_ctrl = camera->controls().find(&libcamera::controls::FrameDurationLimits);
+        //         framerate = 1.0e6 / fd_ctrl->second.min().get<int64_t>();
 
-                sensor_modes.emplace_back(size, pxf, framerate);
-                // TODO: Print both configurations in the example and here
-            }
+        //         sensor_modes.emplace_back(size, pxf, framerate);
+        //         // TODO: Print both configurations in the example and here
+                
+        //         std::cout << "Sensor Mode: size:(" << size.width << "x" << size.height << ") " 
+        //         << "pixel format:(" << pxf.toString() << ") " << "bitdepth:(" << sensorMode.depth() 
+        //         << ") framerate:(" << framerate << ")" << std::endl;
+        //     }
+        // }
+
+        switch (config->validate()) {
+            case libcamera::CameraConfiguration::Valid:
+                std::cout << "Configuration valid" << std::endl;
+                break;
+        
+            case libcamera::CameraConfiguration::Adjusted:
+                // if (strictFormats) {
+                //     std::cout << "Adjusting camera configuration disallowed by --strict-formats argument"
+                //           << std::endl;
+                //     return;
+                // }
+                std::cout << "Camera configuration adjusted" << std::endl;
+                break;
+        
+            case libcamera::CameraConfiguration::Invalid:
+                std::cout << "Camera configuration invalid" << std::endl;
+                return 1;
         }
+        
+        for (int i = 0; i < config->size(); i++) {
+            libcamera::StreamConfiguration &cfg = config->at(i);
+            std::cout << "Sensor Mode: size:(" << cfg.size.width << "x" << cfg.size.height << ") " 
+            << "pixel format:(" << cfg.pixelFormat.toString() << ") " 
+            << "bitdepth:(" << config->sensorConfig->bitDepth << ") " 
+            << "stride:(" << cfg.stride << ") "
+            << "bufferCount:(" << cfg.bufferCount << ") "
+            << "frameSize:(" << cfg.frameSize << ") "
+            << std::endl;
+    
+            // std::cout << "Config[" << i << "]: " << cfg << std::endl;
+            }
+
+        camera->configure(config.get());
 
         std::map<const libcamera::Stream *, std::string> streamNames_;
 
@@ -213,6 +258,7 @@ public:
         // }
 
         libcamera::StreamConfiguration cfg = config->at(0);
+        std::cout << "Allocating buffers\nConfig length = " << config->size() << std::endl;
 
         if (config->size() > 1)
         {

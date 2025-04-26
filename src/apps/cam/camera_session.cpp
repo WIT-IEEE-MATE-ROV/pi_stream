@@ -61,13 +61,22 @@ CameraSession::CameraSession(CameraManager *cm,
 	}
 
 	std::vector<StreamRole> roles = StreamKeyValueParser::roles(options_[OptStream]);
-
+	for (StreamRole role : roles) {
+		std::cout << "Role " << role << '\n';
+	}
 	std::unique_ptr<CameraConfiguration> config =
 		camera_->generateConfiguration(roles);
 	if (!config || config->size() != roles.size()) {
 		std::cerr << "Failed to get default stream configuration"
 			  << std::endl;
 		return;
+	}
+
+	std::cout << "Generated configurations" << std::endl;
+	for (int i = 0; i < config->size(); i++) {
+		std::cout << "Sensor Mode: size:(" << config->at(i).size.width << "x" << config->at(i).size.height << ") " 
+			<< "pixel format:(" << config->at(i).pixelFormat.toString() << ") " << "bitdepth:(" << config->sensorConfig->bitDepth 
+			<< ")" << std::endl;
 	}
 
 	if (options_.isSet(OptOrientation)) {
@@ -93,6 +102,13 @@ CameraSession::CameraSession(CameraManager *cm,
 						      options_[OptStream])) {
 		std::cerr << "Failed to update configuration" << std::endl;
 		return;
+	}
+
+	std::cout << "After updating stream" << std::endl;
+	for (int i = 0; i < config->size(); i++) {
+		std::cout << "Sensor Mode: size:(" << config->at(i).size.width << "x" << config->at(i).size.height << ") " 
+			<< "pixel format:(" << config->at(i).pixelFormat.toString() << ") " << "bitdepth:(" << config->sensorConfig->bitDepth 
+			<< ")" << std::endl;
 	}
 
 	bool strictFormats = options_.isSet(OptStrictFormats);
@@ -130,21 +146,21 @@ CameraSession::CameraSession(CameraManager *cm,
 	}
 
 	switch (config->validate()) {
-	case CameraConfiguration::Valid:
-		break;
+		case CameraConfiguration::Valid:
+			break;
 
-	case CameraConfiguration::Adjusted:
-		if (strictFormats) {
-			std::cout << "Adjusting camera configuration disallowed by --strict-formats argument"
-				  << std::endl;
+		case CameraConfiguration::Adjusted:
+			if (strictFormats) {
+				std::cout << "Adjusting camera configuration disallowed by --strict-formats argument"
+					<< std::endl;
+				return;
+			}
+			std::cout << "Camera configuration adjusted" << std::endl;
+			break;
+
+		case CameraConfiguration::Invalid:
+			std::cout << "Camera configuration invalid" << std::endl;
 			return;
-		}
-		std::cout << "Camera configuration adjusted" << std::endl;
-		break;
-
-	case CameraConfiguration::Invalid:
-		std::cout << "Camera configuration invalid" << std::endl;
-		return;
 	}
 
 	config_ = std::move(config);
@@ -354,6 +370,22 @@ int CameraSession::start()
 	captureCount_ = 0;
 
 	std::cout << "Configuring" << std::endl;
+
+	for (int i = 0; i < config_->size(); i++) {
+		StreamConfiguration &cfg = config_->at(i);
+		std::cout << "Sensor Mode: size:(" << cfg.size.width << "x" << cfg.size.height << ") " 
+		<< "pixel format:(" << cfg.pixelFormat.toString() << ") " 
+		<< "bitdepth:(" << config_->sensorConfig->bitDepth << ") " 
+		<< "stride:(" << cfg.stride << ") "
+		<< "bufferCount:(" << cfg.bufferCount << ") "
+		<< "frameSize:(" << cfg.frameSize << ") "
+		<< std::endl;
+
+		// std::cout << "Config[" << i << "]: " << cfg << std::endl;
+	}
+
+	// std::cout << "configuring camera" << std::endl;
+
 	ret = camera_->configure(config_.get());
 	if (ret < 0) {
 		std::cout << "Failed to configure camera" << std::endl;
