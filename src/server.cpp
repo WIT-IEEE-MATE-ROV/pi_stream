@@ -78,15 +78,16 @@ private:
     void requestCompleteCB(libcamera::Request *request)
     {
         std::cout << "Completed request: " << request->toString() << std::endl;
-        if (!sink->processRequest(request))
+
+        bool success = sink->processRequest(request); // TODO
+        // bool success = true;
+
+        if (!success)
         {
             // requeue = false;
-        }
-        else
-        {
+        } else {
             request->reuse(libcamera::Request::ReuseBuffers);
             camera->queueRequest(request);
-        
         }
     }
 
@@ -157,35 +158,8 @@ public:
             cfg.pixelFormat = libcamera::PixelFormat::fromString("BGR888");
         }
 
-
         libcamera::logSetLevel("RPI", "ERROR");
         libcamera::logSetLevel("Camera", "ERROR");
-
-        // std::vector<SensorMode> sensor_modes;
-        // for (const auto &pxf : formats.pixelformats())
-        // {
-        //     for (const auto &size : formats.sizes(pxf))
-        //     {
-        //         double framerate = 0;
-        //         SensorMode sensorMode(size, pxf, 0);
-        //         config->at(0).size = size;
-        //         config->at(0).pixelFormat = pxf;
-        //         config->sensorConfig = libcamera::SensorConfiguration();
-        //         config->sensorConfig->outputSize = size;
-        //         config->sensorConfig->bitDepth = sensorMode.depth();
-        //         config->validate();
-        //         camera->configure(config.get());
-        //         auto fd_ctrl = camera->controls().find(&libcamera::controls::FrameDurationLimits);
-        //         framerate = 1.0e6 / fd_ctrl->second.min().get<int64_t>();
-
-        //         sensor_modes.emplace_back(size, pxf, framerate);
-        //         // TODO: Print both configurations in the example and here
-                
-        //         std::cout << "Sensor Mode: size:(" << size.width << "x" << size.height << ") " 
-        //         << "pixel format:(" << pxf.toString() << ") " << "bitdepth:(" << sensorMode.depth() 
-        //         << ") framerate:(" << framerate << ")" << std::endl;
-        //     }
-        // }
 
         switch (config->validate()) {
             case libcamera::CameraConfiguration::Valid:
@@ -205,19 +179,27 @@ public:
                 std::cout << "Camera configuration invalid" << std::endl;
                 return 1;
         }
+
         
         for (int i = 0; i < config->size(); i++) {
+            auto fd_ctrl = camera->controls().find(&libcamera::controls::FrameDurationLimits);
+            double framerate = 1.0e6 / fd_ctrl->second.min().get<int64_t>();
+
             libcamera::StreamConfiguration &cfg = config->at(i);
+            cfg.size.width = 640;
+            cfg.size.height = 480;
             std::cout << "Sensor Mode: size:(" << cfg.size.width << "x" << cfg.size.height << ") " 
             << "pixel format:(" << cfg.pixelFormat.toString() << ") " 
             << "bitdepth:(" << config->sensorConfig->bitDepth << ") " 
             << "stride:(" << cfg.stride << ") "
             << "bufferCount:(" << cfg.bufferCount << ") "
             << "frameSize:(" << cfg.frameSize << ") "
+            << "framerate:(" << framerate << ") "
             << std::endl;
-    
+
+
             // std::cout << "Config[" << i << "]: " << cfg << std::endl;
-            }
+        }
 
         camera->configure(config.get());
 
@@ -231,7 +213,7 @@ public:
         }
 
         sink = std::make_unique<FileSink>(camera.get(), streamNames_);
-        sink->setFilePattern("server.cpp.ppm");
+        sink->setFilePattern("captures/server.cpp_#.ppm");
         ret = sink->configure(*config);
         if (ret < 0)
         {
@@ -309,6 +291,9 @@ public:
             requests.push_back(std::move(request));
         }
 
+        libcamera::ControlList controls;
+        controls.set(libcamera::controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({50000, 50000}));
+
         libcamera::logSetLevel("RPI", "INFO");
         libcamera::logSetLevel("Camera", "INFO");
 
@@ -328,7 +313,7 @@ public:
         // config = camera->generateConfiguration(stream_roles);
         camera->requestCompleted.connect(this, &Server::requestCompleteCB);
 
-        if (camera->start())
+        if (camera->start(&controls))
         {
             std::cerr << "Failed to start camera" << std::endl;
             cm->stop();
