@@ -93,9 +93,9 @@ void Client::streamVideoOverUDP(const std::string &ipAddress, int port, int came
     // struct sigaction sa{};
     // sa.sa_handler = &Client::signalHandler;
     // sigaction(SIGINT, &sa, nullptr);
-    run();
-    std::cout << "Exiting..." << std::endl;
-    return;
+    // run();
+    // std::cout << "Exiting..." << std::endl;
+    // return;
 
     if (width <= 0 || height <= 0)
     {

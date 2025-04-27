@@ -49,5 +49,7 @@ int PPMWriter::write(const char *filename,
 		}
 	}
 
+	// std::cout << "Wrote data. rowLength = " << rowLength << ", width = " << config.size.width << ", height = " << config.size.height << ", stride = " << config.stride << std::endl;
+
 	return 0;
 }

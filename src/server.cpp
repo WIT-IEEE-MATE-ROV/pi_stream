@@ -71,16 +71,70 @@ class Server
 {
 
 private:
+    const uint16_t PORT = 12345;
+    const std::string IP_ADDRESS = "10.0.0.135";
+    const uint32_t WIDTH = 320, HEIGHT = 180;
+    const uint32_t MAX_PACKET_SIZE = 320 * 180 + 1;
+
+    uint32_t stride_ = 0;
+    uint32_t img_count = 0;
     std::unique_ptr<FileSink> sink;
     std::shared_ptr<libcamera::Camera> camera;
+    std::vector<uchar> send_buffer_;
     std::map<const libcamera::Stream *, std::string> streamNames_;
+    int udp_socket_ = 0;
+    sockaddr_in dest_addr_{};
 
     void requestCompleteCB(libcamera::Request *request)
     {
+        ++img_count;
         std::cout << "Completed request: " << request->toString() << std::endl;
 
-        bool success = sink->processRequest(request); // TODO
-        // bool success = true;
+        // bool success = sink->processRequest(request);
+        bool success = true;
+
+        cv::Mat frame(HEIGHT, WIDTH, CV_8UC3);
+        libcamera::FrameBuffer *frameBuffer;
+        for (auto &[stream, buffer] : request->buffers()) {
+            frameBuffer = buffer;
+            break;
+        }
+
+        // Copy image data from libcamera Image to cv Mat
+        auto image = Image::fromFrameBuffer(frameBuffer, Image::MapMode::ReadOnly);
+        const char *row = reinterpret_cast<const char *>(image->data(0).data());
+
+        uint32_t row_length = WIDTH * 3;
+        
+        uint32_t frame_idx = 0;
+        for (int32_t y = 0; y < HEIGHT; y++, row += stride_) {
+            for (int32_t x = 0; x < row_length; x += 3, frame_idx += 3) {
+                // BGR -> RGB
+                frame.data[frame_idx] = row[x + 2];
+                frame.data[frame_idx + 1] = row[x + 1];
+                frame.data[frame_idx + 2] = row[x]; 
+            }
+        }
+        
+        // char filename[100];
+        // sprintf(filename, "captures/testframe_%u.jpg", img_count);
+        // cv::imwrite(filename, frame);
+        
+        if (!cv::imencode(".jpg", frame, send_buffer_))
+        {
+            std::cerr << "Error: Could not encode frame! " << strerror(errno) << std::endl;
+        }
+
+        if (send_buffer_.size() > MAX_PACKET_SIZE) {
+            std::cerr << "Warning: Frame too large for a single UDP packet. Skipping... " << strerror(errno) << std::endl;
+        }
+
+        ssize_t sentBytes = sendto(udp_socket_, send_buffer_.data(), send_buffer_.size(), 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
+        std::cout << "Bytes sent " << sentBytes << std::endl;
+        if (sentBytes < 0)
+        {
+            std::cerr << "Error: Failed to send frame! " << strerror(errno) << std::endl;
+        }
 
         if (!success)
         {
@@ -100,6 +154,20 @@ private:
 public:
     int run()
     {
+        udp_socket_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (udp_socket_ < 0) {
+            std::cerr << "Error: Could not create socket!" << std::endl;
+            return 1;
+        }
+        
+        dest_addr_.sin_family = AF_INET;
+        dest_addr_.sin_port = htons(PORT);
+        if (inet_pton(AF_INET, IP_ADDRESS.c_str(), &dest_addr_.sin_addr) <= 0) {
+            std::cerr << "Error: Invalid IP address!" << std::endl;
+            close(udp_socket_);
+            return 1;
+        }
+    
         int ret;
 
         std::map<libcamera::FrameBuffer *, std::unique_ptr<Image>> mappedBuffers;
@@ -186,8 +254,9 @@ public:
             double framerate = 1.0e6 / fd_ctrl->second.min().get<int64_t>();
 
             libcamera::StreamConfiguration &cfg = config->at(i);
-            cfg.size.width = 640;
-            cfg.size.height = 480;
+            cfg.size.width = WIDTH;
+            cfg.size.height = HEIGHT;
+            stride_ = cfg.stride;
             std::cout << "Sensor Mode: size:(" << cfg.size.width << "x" << cfg.size.height << ") " 
             << "pixel format:(" << cfg.pixelFormat.toString() << ") " 
             << "bitdepth:(" << config->sensorConfig->bitDepth << ") " 
@@ -195,10 +264,8 @@ public:
             << "bufferCount:(" << cfg.bufferCount << ") "
             << "frameSize:(" << cfg.frameSize << ") "
             << "framerate:(" << framerate << ") "
+            << "stride:(" << cfg.stride << ")"
             << std::endl;
-
-
-            // std::cout << "Config[" << i << "]: " << cfg << std::endl;
         }
 
         camera->configure(config.get());
@@ -226,19 +293,6 @@ public:
 
         auto allocator = std::make_unique<libcamera::FrameBufferAllocator>(camera);
 
-        /* Identify the stream with the least number of buffers. */
-        // unsigned int nbuffers = UINT_MAX;
-        // for (libcamera::StreamConfiguration &cfg : *config) {
-        // 	ret = allocator->allocate(cfg.stream());
-        // 	if (ret < 0) {
-        // 		std::cerr << "Can't allocate buffers" << std::endl;
-        // 		return -ENOMEM;
-        // 	}
-
-        // 	unsigned int allocated = allocator->buffers(cfg.stream()).size();
-        // 	nbuffers = std::min(nbuffers, allocated);
-        // }
-
         libcamera::StreamConfiguration cfg = config->at(0);
         std::cout << "Allocating buffers\nConfig length = " << config->size() << std::endl;
 
@@ -262,6 +316,7 @@ public:
 
         std::vector<std::unique_ptr<libcamera::Request>> requests;
 
+        std::cout << "nbuffers: " << nbuffers << std::endl; 
         for (unsigned int i = 0; i < nbuffers; i++)
         {
             std::unique_ptr<libcamera::Request> request = camera->createRequest();
@@ -285,7 +340,6 @@ public:
 
             // if (sink_)
             //     sink_->mapBuffer(buffer.get());
-
             sink->mapBuffer(buffer.get());
 
             requests.push_back(std::move(request));
@@ -334,7 +388,7 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         std::chrono::time_point now = start;
-        while (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() < 5000)
+        while (true || std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() < 5000)
         {
             now = std::chrono::high_resolution_clock::now();
         }
