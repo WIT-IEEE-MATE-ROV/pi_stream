@@ -25,6 +25,8 @@ extern "C"
 #include "libavcodec/avcodec.h"
 #include "libavutil/opt.h"
 #include "libavutil/hwcontext.h"
+#include "libavutil/opt.h"
+#include "libavutil/imgutils.h"
 }
 
 #include "udpclient.h"
@@ -75,6 +77,8 @@ private:
     const std::string IP_ADDRESS = "10.0.0.135";
     const uint32_t WIDTH = 320, HEIGHT = 180;
     const uint32_t MAX_PACKET_SIZE = 320 * 180 + 1;
+    const int32_t FPS = 20;
+    const int32_t FPS_US = 1000000 / FPS;
 
     uint32_t stride_ = 0;
     uint32_t img_count = 0;
@@ -84,6 +88,10 @@ private:
     std::map<const libcamera::Stream *, std::string> streamNames_;
     int udp_socket_ = 0;
     sockaddr_in dest_addr_{};
+    const AVCodec *codec_;
+    AVCodecContext *codec_context_;
+    AVFrame *av_frame;
+    
 
     void requestCompleteCB(libcamera::Request *request)
     {
@@ -115,26 +123,56 @@ private:
                 frame.data[frame_idx + 2] = row[x]; 
             }
         }
-        
+
+
+        cv::Mat yuv;
+        cv::cvtColor(frame, yuv, cv::COLOR_BGR2YUV_I420);
+
+        int y_size = codec_context_->width * codec_context_->height;
+        memcpy(av_frame->data[0], yuv.data, y_size);
+        memcpy(av_frame->data[1], yuv.data + y_size, y_size / 4);
+        memcpy(av_frame->data[2], yuv.data + y_size + y_size / 4, y_size / 4);
+
+        av_frame->pts = 0;
+
+        if (avcodec_send_frame(codec_context_, av_frame) < 0) {
+            std::cerr << "Error sending frame for encoding" << std::endl;
+            av_frame_free(&av_frame);
+            avcodec_free_context(&codec_context_);
+            return;
+        }
+
+        AVPacket *pkt = av_packet_alloc();
+        int ret = avcodec_receive_packet(codec_context_, pkt);
+        if (ret == 0) {
+            // TODO: Manipulate packet
+            ssize_t sentBytes = sendto(udp_socket_, pkt->data, pkt->size, 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
+            std::cout << "Bytes sent " << sentBytes << std::endl;
+            if (sentBytes < 0)
+            {
+                std::cerr << "Error: Failed to send frame! " << strerror(errno) << std::endl;
+            }
+        }
+
         // char filename[100];
         // sprintf(filename, "captures/testframe_%u.jpg", img_count);
         // cv::imwrite(filename, frame);
         
-        if (!cv::imencode(".jpg", frame, send_buffer_))
-        {
-            std::cerr << "Error: Could not encode frame! " << strerror(errno) << std::endl;
-        }
+        // if (!cv::imencode(".jpg", frame, send_buffer_))
+        // {
+        //     std::cerr << "Error: Could not encode frame! " << strerror(errno) << std::endl;
+        // }
 
-        if (send_buffer_.size() > MAX_PACKET_SIZE) {
-            std::cerr << "Warning: Frame too large for a single UDP packet. Skipping... " << strerror(errno) << std::endl;
-        }
+        // if (send_buffer_.size() > MAX_PACKET_SIZE) {
+        //     std::cerr << "Warning: Frame too large for a single UDP packet. Skipping... " << strerror(errno) << std::endl;
+        // }
 
-        ssize_t sentBytes = sendto(udp_socket_, send_buffer_.data(), send_buffer_.size(), 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
-        std::cout << "Bytes sent " << sentBytes << std::endl;
-        if (sentBytes < 0)
-        {
-            std::cerr << "Error: Failed to send frame! " << strerror(errno) << std::endl;
-        }
+        // ssize_t sentBytes = sendto(udp_socket_, send_buffer_.data(), send_buffer_.size(), 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
+        // std::cout << "Bytes sent " << sentBytes << std::endl;
+        // if (sentBytes < 0)
+        // {
+        //     std::cerr << "Error: Failed to send frame! " << strerror(errno) << std::endl;
+        // }
 
         if (!success)
         {
@@ -154,6 +192,40 @@ private:
 public:
     int run()
     {
+        codec_ = avcodec_find_encoder(AV_CODEC_ID_H264);
+        if (!codec_) {
+            std::cerr << "H.264 codec not found" << std::endl;
+            return 1;
+        }
+
+        codec_context_ = avcodec_alloc_context3(codec_);
+        if (!codec_context_) {
+            std::cerr << "Couldn't allocate codec context" << std::endl;
+            return 1;
+        }
+
+        codec_context_->bit_rate = 400000;
+        codec_context_->width = WIDTH;
+        codec_context_->height = HEIGHT;
+        codec_context_->time_base = {1, FPS};
+        codec_context_->framerate = {FPS, 1};
+        codec_context_->gop_size = 10;
+        codec_context_->max_b_frames = 1;
+        codec_context_->pix_fmt = AV_PIX_FMT_YUV420P;
+
+        if (avcodec_open2(codec_context_, codec_, nullptr) < 0) {
+            std::cerr << "Couldn't open codec" << std::endl;
+            avcodec_free_context(&codec_context_);
+            return 1;
+        }
+
+        AVFrame *av_frame = av_frame_alloc();
+        av_frame->format = codec_context_->pix_fmt;
+        av_frame->width = codec_context_->width;
+        av_frame->height = codec_context_->height;
+        av_frame_get_buffer(av_frame, 32);
+
+
         udp_socket_ = socket(AF_INET, SOCK_DGRAM, 0);
         if (udp_socket_ < 0) {
             std::cerr << "Error: Could not create socket!" << std::endl;
@@ -346,7 +418,7 @@ public:
         }
 
         libcamera::ControlList controls;
-        controls.set(libcamera::controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({50000, 50000}));
+        controls.set(libcamera::controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({FPS_US, FPS_US}));
 
         libcamera::logSetLevel("RPI", "INFO");
         libcamera::logSetLevel("Camera", "INFO");
