@@ -76,7 +76,7 @@ private:
     const uint16_t PORT = 12345;
     const std::string IP_ADDRESS = "10.0.0.135";
     const uint32_t WIDTH = 320, HEIGHT = 180;
-    const uint32_t MAX_PACKET_SIZE = 320 * 180 + 1;
+    const uint32_t MAX_PACKET_SIZE = WIDTH * HEIGHT + 1;
     const int32_t FPS = 20;
     const int32_t FPS_US = 1000000 / FPS;
 
@@ -87,11 +87,15 @@ private:
     std::vector<uchar> send_buffer_;
     std::map<const libcamera::Stream *, std::string> streamNames_;
     int udp_socket_ = 0;
+    int64_t pts_ = 0;
     sockaddr_in dest_addr_{};
     const AVCodec *codec_;
     AVCodecContext *codec_context_;
     AVFrame *av_frame;
-    
+    AVPacket *pkt;
+
+    // TODO: Measure times to see what is causing latency when dimensions are increased above 320x180
+    // TODO: Try that but without h.264 encoding
 
     void requestCompleteCB(libcamera::Request *request)
     {
@@ -123,8 +127,6 @@ private:
                 frame.data[frame_idx + 2] = row[x]; 
             }
         }
-
-
         cv::Mat yuv;
         cv::cvtColor(frame, yuv, cv::COLOR_BGR2YUV_I420);
 
@@ -133,7 +135,7 @@ private:
         memcpy(av_frame->data[1], yuv.data + y_size, y_size / 4);
         memcpy(av_frame->data[2], yuv.data + y_size + y_size / 4, y_size / 4);
 
-        av_frame->pts = 0;
+        av_frame->pts = pts_++;
 
         if (avcodec_send_frame(codec_context_, av_frame) < 0) {
             std::cerr << "Error sending frame for encoding" << std::endl;
@@ -142,16 +144,20 @@ private:
             return;
         }
 
-        AVPacket *pkt = av_packet_alloc();
         int ret = avcodec_receive_packet(codec_context_, pkt);
         if (ret == 0) {
+            // std::cout << "Encoded successfully" << std::endl; 
             // TODO: Manipulate packet
             ssize_t sentBytes = sendto(udp_socket_, pkt->data, pkt->size, 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
-            std::cout << "Bytes sent " << sentBytes << std::endl;
+            std::cout << "Bytes sent " << sentBytes << std::endl; // Should be less than 10k
             if (sentBytes < 0)
             {
                 std::cerr << "Error: Failed to send frame! " << strerror(errno) << std::endl;
             }
+        } else {
+            char errstr[200];
+            av_strerror(ret, errstr, 200);
+            std::cerr << "Error occured recieving the av packet: " << errstr << std::endl;
         }
 
         // char filename[100];
@@ -213,17 +219,29 @@ public:
         codec_context_->max_b_frames = 1;
         codec_context_->pix_fmt = AV_PIX_FMT_YUV420P;
 
+        if (av_opt_set(codec_context_->priv_data, "preset", "ultrafast", 0)) {
+            std::cout << "Failed to set ultrafast option" << std::endl;
+        }
+        // if (av_opt_set(codec_context_->priv_data, "crf", "35", 0)) {
+        //     std::cout << "Failed to set crf option" << std::endl;
+        // }
+        if (av_opt_set(codec_context_->priv_data, "tune", "zerolatency", 0)) {
+            std::cout << "Failed to set tune option" << std::endl;
+        }
+
         if (avcodec_open2(codec_context_, codec_, nullptr) < 0) {
             std::cerr << "Couldn't open codec" << std::endl;
             avcodec_free_context(&codec_context_);
             return 1;
         }
 
-        AVFrame *av_frame = av_frame_alloc();
+        av_frame = av_frame_alloc();
         av_frame->format = codec_context_->pix_fmt;
         av_frame->width = codec_context_->width;
         av_frame->height = codec_context_->height;
         av_frame_get_buffer(av_frame, 32);
+
+        pkt = av_packet_alloc();
 
 
         udp_socket_ = socket(AF_INET, SOCK_DGRAM, 0);
