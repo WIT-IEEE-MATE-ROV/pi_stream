@@ -36,38 +36,7 @@ extern "C"
 #include "apps/common/ppm_writer.h"
 #include "apps/common/image.h"
 
-struct SensorMode
-{
-    SensorMode()
-        : size({}), format({}), fps(0)
-    {
-    }
-    SensorMode(libcamera::Size _size, libcamera::PixelFormat _format, double _fps)
-        : size(_size), format(_format), fps(_fps)
-    {
-    }
-    unsigned int depth() const
-    {
-        // This is a really ugly way of getting the bit depth of the format.
-        // But apart from duplicating the massive bayer format table, there is
-        // no other way to determine this.
-        std::string fmt = format.toString();
-        unsigned int mode_depth = fmt.find("8") != std::string::npos ? 8 : fmt.find("10") != std::string::npos ? 10
-                                                                       : fmt.find("12") != std::string::npos   ? 12
-                                                                       : fmt.find("14") != std::string::npos   ? 14
-                                                                                                               : 16;
-        return mode_depth;
-    }
-    libcamera::Size size;
-    libcamera::PixelFormat format;
-    double fps;
-    std::string ToString() const
-    {
-        std::stringstream ss;
-        ss << format.toString() << "," << size.toString() << "/" << fps;
-        return ss.str();
-    }
-};
+#define PRINTV(EXP) (std::cout << #EXP << " = " << EXP << '\n')
 
 class Server
 {
@@ -75,9 +44,9 @@ class Server
 private:
     const uint16_t PORT = 12345;
     const std::string IP_ADDRESS = "10.0.0.135";
-    const uint32_t WIDTH = 320, HEIGHT = 180;
+    const uint32_t WIDTH = 640, HEIGHT = 480;
     const uint32_t MAX_PACKET_SIZE = WIDTH * HEIGHT + 1;
-    const int32_t FPS = 20;
+    const int32_t FPS = 30;
     const int32_t FPS_US = 1000000 / FPS;
 
     uint32_t stride_ = 0;
@@ -93,14 +62,103 @@ private:
     AVCodecContext *codec_context_;
     AVFrame *av_frame;
     AVPacket *pkt;
+    cv::Mat frame_;
+    cv::Mat yuv_;
+    uint32_t adjustment = 0;
 
     // TODO: Measure times to see what is causing latency when dimensions are increased above 320x180
     // TODO: Try that but without h.264 encoding
 
+    int encodeImage(libcamera::FrameBuffer *frameBuffer)
+    {
+        
+        // Copy image data from libcamera Image to cv Mat
+        auto image = Image::fromFrameBuffer(frameBuffer, Image::MapMode::ReadOnly);
+
+        const char *row = reinterpret_cast<const char *>(image->data(0).data());
+
+        const uint8_t *image_data = image->data(0).data(); // raw NV12 data
+
+        int y_stride = stride_; // actual stride (might be wider than width)
+        int height = codec_context_->height;
+        int y_plane_size = image->data(0).size();
+        int uv_plane_size = image->data(1).size();
+
+        if (img_count % 100 == 0) {
+        std::cout << "Format = " << av_get_pix_fmt_name(static_cast<AVPixelFormat>(av_frame->format)) 
+            << " \ndim = " <<  codec_context_->width << 'x' << codec_context_->height 
+            << " \nstride = " << stride_ 
+            << " \ny_plane_size = " << frameBuffer->planes()[0].length 
+            << " \nuv_plane_size " << frameBuffer->planes()[1].length
+            << "\nn planes = " << frameBuffer->planes().size()
+            << std::endl;
+        }
+
+        // YUV420
+        const uint8_t *y_plane = image->data(0).data();
+        const uint8_t *u_plane = image->data(1).data(); 
+        const uint8_t *v_plane = image->data(2).data();
+        
+        // Set data pointers based on expected NV12 layout
+        av_frame->data[0] = const_cast<uint8_t *>(y_plane);                   // Y plane
+        av_frame->data[1] = const_cast<uint8_t *>(u_plane); // UV plane
+        av_frame->data[2] = const_cast<uint8_t *>(v_plane);
+        av_frame->data[3] = NULL;
+
+        av_frame->linesize[0] = stride_;
+        av_frame->linesize[1] = stride_/2;
+        av_frame->linesize[2] = stride_/2;
+        av_frame->linesize[3] = 0;
+
+
+        // NV12
+        // const uint8_t *y_plane = image->data(0).data();
+        // const uint8_t *uv_plane = image->data(1).data(); // safer
+        // PRINTV(frameBuffer->planes()[0].length);
+        // PRINTV(frameBuffer->planes()[1].length);
+        // // const uint8_t *v_plane = image->data(2).data();
+        // // av_frame->
+        // // Set data pointers based on expected NV12 layout
+        // av_frame->data[0] = const_cast<uint8_t *>(y_plane);                   // Y plane
+        // av_frame->data[1] = const_cast<uint8_t *>(uv_plane); // UV plane
+        // av_frame->data[2] = NULL;
+
+        // uint32_t aligned_width  = (WIDTH + 31) & ~31;
+        // uint32_t aligned_height = (HEIGHT + 15) & ~15;
+        // av_frame->linesize[0] = (frameBuffer->planes()[0].length / HEIGHT + 31) & ~31;
+        // av_frame->linesize[1] = (frameBuffer->planes()[0].length / HEIGHT + 31) & ~31;
+        // av_frame->linesize[2] = 0;
+        // PRINTV(av_frame->linesize[0]);
+        // PRINTV(av_frame->linesize[1]);
+
+
+        av_frame->pts = pts_++;
+
+        // std::cout << "av_frame->format = " << av_get_pix_fmt_name(static_cast<AVPixelFormat>(av_frame->format)) << '\n';
+        int ret;
+        if ((ret = avcodec_send_frame(codec_context_, av_frame)) < 0) {
+            char errstr[200];
+            av_strerror(ret, errstr, 200);
+            std::cerr << "Error sending to encoder: " << errstr << std::endl;
+            av_frame_free(&av_frame);
+            avcodec_free_context(&codec_context_);
+            return ret;
+        }
+
+        ret = avcodec_receive_packet(codec_context_, pkt);
+        if (ret != 0) {
+            char errstr[200];
+            av_strerror(ret, errstr, 200);
+            std::cerr << "Failed to recieve packet from encoder: " << errstr << std::endl;
+        }
+
+        return ret;
+    }
+
     void requestCompleteCB(libcamera::Request *request)
     {
         ++img_count;
-        std::cout << "Completed request: " << request->toString() << std::endl;
+        // std::cout << "Completed request: " << request->toString() << std::endl;
 
         // bool success = sink->processRequest(request);
         bool success = true;
@@ -112,44 +170,17 @@ private:
             break;
         }
 
-        // Copy image data from libcamera Image to cv Mat
-        auto image = Image::fromFrameBuffer(frameBuffer, Image::MapMode::ReadOnly);
-        const char *row = reinterpret_cast<const char *>(image->data(0).data());
+        auto encodeStart = std::chrono::high_resolution_clock::now();
+        int ret = encodeImage(frameBuffer);
+        auto encodeEnd = std::chrono::high_resolution_clock::now();
 
-        uint32_t row_length = WIDTH * 3;
-        
-        uint32_t frame_idx = 0;
-        for (int32_t y = 0; y < HEIGHT; y++, row += stride_) {
-            for (int32_t x = 0; x < row_length; x += 3, frame_idx += 3) {
-                // BGR -> RGB
-                frame.data[frame_idx] = row[x + 2];
-                frame.data[frame_idx + 1] = row[x + 1];
-                frame.data[frame_idx + 2] = row[x]; 
-            }
-        }
-        cv::Mat yuv;
-        cv::cvtColor(frame, yuv, cv::COLOR_BGR2YUV_I420);
+        std::cout << "Encode time: " << std::chrono::duration_cast<std::chrono::milliseconds>(encodeEnd - encodeStart).count() << "ms\t"; 
 
-        int y_size = codec_context_->width * codec_context_->height;
-        memcpy(av_frame->data[0], yuv.data, y_size);
-        memcpy(av_frame->data[1], yuv.data + y_size, y_size / 4);
-        memcpy(av_frame->data[2], yuv.data + y_size + y_size / 4, y_size / 4);
-
-        av_frame->pts = pts_++;
-
-        if (avcodec_send_frame(codec_context_, av_frame) < 0) {
-            std::cerr << "Error sending frame for encoding" << std::endl;
-            av_frame_free(&av_frame);
-            avcodec_free_context(&codec_context_);
-            return;
-        }
-
-        int ret = avcodec_receive_packet(codec_context_, pkt);
+        // Send to UDP client
         if (ret == 0) {
-            // std::cout << "Encoded successfully" << std::endl; 
-            // TODO: Manipulate packet
             ssize_t sentBytes = sendto(udp_socket_, pkt->data, pkt->size, 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
-            std::cout << "Bytes sent " << sentBytes << std::endl; // Should be less than 10k
+            std::cout << "Bytes sent " << sentBytes << "\n\n"; // Should be less than 10k
+            av_packet_unref(pkt);
             if (sentBytes < 0)
             {
                 std::cerr << "Error: Failed to send frame! " << strerror(errno) << std::endl;
@@ -198,7 +229,10 @@ private:
 public:
     int run()
     {
-        codec_ = avcodec_find_encoder(AV_CODEC_ID_H264);
+        frame_ = cv::Mat(HEIGHT, WIDTH, CV_8UC3);
+
+        // codec_ = avcodec_find_encoder(AV_CODEC_ID_H264);
+        codec_ = avcodec_find_encoder_by_name("h264_v4l2m2m"); // 28ms encode
         if (!codec_) {
             std::cerr << "H.264 codec not found" << std::endl;
             return 1;
@@ -210,23 +244,35 @@ public:
             return 1;
         }
 
-        codec_context_->bit_rate = 400000;
+        // codec_context_->bit_rate = 400000;
         codec_context_->width = WIDTH;
         codec_context_->height = HEIGHT;
         codec_context_->time_base = {1, FPS};
         codec_context_->framerate = {FPS, 1};
-        codec_context_->gop_size = 10;
-        codec_context_->max_b_frames = 1;
+        codec_context_->gop_size = FPS;
+        // codec_context_->max_b_frames = 3;
+        // codec_context_->refs = 3;
         codec_context_->pix_fmt = AV_PIX_FMT_YUV420P;
-
+        // codec_context_->pix_fmt = AV_PIX_FMT_NV12;
+        
         if (av_opt_set(codec_context_->priv_data, "preset", "ultrafast", 0)) {
             std::cout << "Failed to set ultrafast option" << std::endl;
         }
-        // if (av_opt_set(codec_context_->priv_data, "crf", "35", 0)) {
-        //     std::cout << "Failed to set crf option" << std::endl;
-        // }
+        if (av_opt_set(codec_context_->priv_data, "crf", "18", 0)) {
+            std::cout << "Failed to set crf option" << std::endl;
+        }
         if (av_opt_set(codec_context_->priv_data, "tune", "zerolatency", 0)) {
             std::cout << "Failed to set tune option" << std::endl;
+        }
+        if (av_opt_set(codec_context_->priv_data, "profile", "baseline", 0)) {
+            std::cout << "Failed to set profile option" << std::endl;
+        }
+        if (av_opt_set(codec_context_->priv_data, "level", "3.0", 0)) {
+            std::cout << "Failed to set level option" << std::endl;
+        }
+        
+        if (av_opt_set(codec_context_->priv_data, "repeat_spspps", "1", 0)) {
+            std::cout << "Failed to set repeat_spspps option" << std::endl;
         }
 
         if (avcodec_open2(codec_context_, codec_, nullptr) < 0) {
@@ -313,7 +359,9 @@ public:
         config->orientation = libcamera::Orientation::Rotate180;
         for (int i = 0; i < config->size(); i++) {
             auto &cfg = config->at(i);
-            cfg.pixelFormat = libcamera::PixelFormat::fromString("BGR888");
+            // cfg.pixelFormat = libcamera::PixelFormat::fromString("BGR888");
+            // cfg.pixelFormat = libcamera::formats::NV12;
+            cfg.pixelFormat = libcamera::formats::YUV420;
         }
 
         libcamera::logSetLevel("RPI", "ERROR");
@@ -354,7 +402,6 @@ public:
             << "bufferCount:(" << cfg.bufferCount << ") "
             << "frameSize:(" << cfg.frameSize << ") "
             << "framerate:(" << framerate << ") "
-            << "stride:(" << cfg.stride << ")"
             << std::endl;
         }
 
@@ -365,8 +412,7 @@ public:
         for (int i = 0; i < config->size(); i++)
         {
             libcamera::StreamConfiguration &cfg = config->at(i);
-            streamNames_[cfg.stream()] = "cam" + std::to_string(camNum);
-            +"-stream" + std::to_string(i);
+            streamNames_[cfg.stream()] = "cam" + std::to_string(camNum) + "-stream" + std::to_string(i);
         }
 
         sink = std::make_unique<FileSink>(camera.get(), streamNames_);
@@ -384,7 +430,6 @@ public:
         auto allocator = std::make_unique<libcamera::FrameBufferAllocator>(camera);
 
         libcamera::StreamConfiguration cfg = config->at(0);
-        std::cout << "Allocating buffers\nConfig length = " << config->size() << std::endl;
 
         if (config->size() > 1)
         {
@@ -406,7 +451,6 @@ public:
 
         std::vector<std::unique_ptr<libcamera::Request>> requests;
 
-        std::cout << "nbuffers: " << nbuffers << std::endl; 
         for (unsigned int i = 0; i < nbuffers; i++)
         {
             std::unique_ptr<libcamera::Request> request = camera->createRequest();
@@ -470,7 +514,7 @@ public:
 
         for (auto &request : requests)
         {
-            std::cout << "Queueing request" << std::endl;
+            std::cout << "Queueing request: " << request->toString() << std::endl;
             ret = camera->queueRequest(request.get());
         }
 
