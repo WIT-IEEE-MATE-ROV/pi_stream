@@ -350,10 +350,9 @@ public:
         sink = std::make_unique<FileSink>(camera_.get(), streamNames_);
         sink->setFilePattern("captures/server.cpp_#.ppm");
         ret = sink->configure(*config);
-        if (ret < 0)
+        if (ret != 0)
         {
-            std::cout << "Failed to configure frame sink"
-                      << std::endl;
+            std::cout << "Failed to configure frame sink: " << ret << std::endl;
             return ret;
         }
 
@@ -361,29 +360,26 @@ public:
 
         auto allocator = std::make_unique<libcamera::FrameBufferAllocator>(camera_);
 
-        libcamera::StreamConfiguration cfg = config->at(0);
-
         if (config->size() > 1)
         {
             std::cerr << "More than one config" << std::endl;
             return 1;
         }
 
-        unsigned int nbuffers = UINT_MAX;
+        libcamera::StreamConfiguration &cfg = config->at(0);
 
         ret = allocator->allocate(cfg.stream());
-        if (ret < 0)
+        if (ret != 0)
         {
-            std::cerr << "Can't allocate buffers" << std::endl;
+            std::cerr << "Can't allocate buffers: " << ret << std::endl;
             return -ENOMEM;
         }
 
         unsigned int allocated = allocator->buffers(cfg.stream()).size();
-        nbuffers = std::min(nbuffers, allocated);
 
         std::vector<std::unique_ptr<libcamera::Request>> requests;
 
-        for (unsigned int i = 0; i < nbuffers; i++)
+        for (auto& buffer : allocator->buffers(cfg.stream()))
         {
             std::unique_ptr<libcamera::Request> request = camera_->createRequest();
             if (!request)
@@ -392,15 +388,9 @@ public:
                 return -ENOMEM;
             }
 
-            libcamera::Stream *stream = cfg.stream();
-            const std::vector<std::unique_ptr<libcamera::FrameBuffer>> &buffers = allocator->buffers(stream);
-            const std::unique_ptr<libcamera::FrameBuffer> &buffer = buffers[i];
-
-            ret = request->addBuffer(stream, buffer.get());
-            if (ret < 0)
-            {
-                std::cerr << "Can't set buffer for request"
-                          << std::endl;
+            ret = request->addBuffer(cfg.stream(), buffer.get());
+            if (ret < 0) {
+                std::cerr << "Can't set buffer for request" << std::endl;
                 return ret;
             }
 
@@ -414,12 +404,15 @@ public:
 
         camera_->requestCompleted.connect(this, &Server::requestCompleteCB);
 
-        if (camera_->start(&controls))
+        ret = camera_->start(&controls);
+        if (ret != 0)
         {
-            std::cerr << "Failed to start camera" << std::endl;
+            std::cerr << "Failed to start camera: " << ret << std::endl;
             cm->stop();
             return 1;
-        } else {
+        } 
+        else 
+        {
             std::cout << "Started camera" << std::endl;
         }
 
@@ -449,7 +442,7 @@ public:
             }
         }
 
-        std::cout << "stopping" << std::endl;
+        std::cout << "Stopping" << std::endl;
 
         cm->stop();
 
@@ -457,7 +450,8 @@ public:
     }
 };
 
-int main(void)
+// TODO: Command line arguments
+int main(const int argc, const char *argv[])
 {
     return Server().run();
 }
