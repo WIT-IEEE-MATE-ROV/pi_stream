@@ -8,7 +8,6 @@ ENV LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ffmpeg \
-    libcamera-dev \
     libevent-dev \
     libopencv-dev \
     libyaml-dev \
@@ -21,15 +20,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-server \
     build-essential \
     ca-certificates \
+    meson \
+    ninja-build \
+    python3-yaml \
+    python3-ply \
+    python3-jinja2 \
+    libgnutls28-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Modify the default SSH configuration
-#RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
-#    && echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config \
-#    && echo "Subsystem sftp /usr/lib/openssh/sftp-server" >> /etc/ssh/sshd_config \
-#    && echo "LogLevel DEBUG2" >> /etc/ssh/sshd_config
+# Clone and build libcamera
+RUN git clone https://git.libcamera.org/libcamera/libcamera.git \
+    && cd libcamera \
+    && meson setup build \
+    && ninja -C build install \
+    && ldconfig \
+    && cd ..
 
-# Ensure the runtime directory exists
+# Modify the default SSH configuration
 RUN ( \
     echo 'LogLevel DEBUG2'; \
     echo 'PermitRootLogin yes'; \
@@ -39,6 +46,7 @@ RUN ( \
   && mkdir /run/sshd
 
 RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
 # Generate SSH host keys (if not already present)
 RUN ssh-keygen -A
 
@@ -56,6 +64,3 @@ WORKDIR /home/user
 # Clone the pi_stream project repository and fix ownership
 RUN git clone --branch dev https://github.com/WIT-IEEE-MATE-ROV/pi_stream.git \
     && chown -R user:user /home/user/pi_stream
-
-# Run the SSH daemon in the foreground using the default configuration
-#CMD ["/usr/sbin/sshd", "-D", "-e"]
