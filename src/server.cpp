@@ -40,10 +40,16 @@ extern "C"
 
 class Server
 {
+public:
+
+Server(const std::string &dest_ip) {
+    dest_ip_ = dest_ip;
+    std::cout << "Sending frames to " << dest_ip_ << std::endl;
+}
+
 
 private:
     const uint16_t PORT = 12345;
-    const std::string IP_ADDRESS = "10.0.0.135";
     const uint32_t WIDTH = 640, HEIGHT = 480;
     const uint32_t MAX_PACKET_SIZE = WIDTH * HEIGHT + 1;
     const int32_t FPS = 30;
@@ -51,21 +57,22 @@ private:
     const uint32_t PRINT_INTERVAL = 100;
 
     uint32_t stride_ = 0;
-    uint32_t img_count = 0;
-    std::unique_ptr<FileSink> sink;
+    uint32_t img_count_ = 0;
+    std::unique_ptr<FileSink> sink_;
     std::shared_ptr<libcamera::Camera> camera_;
     int udp_socket_ = 0;
     int64_t pts_ = 0;
     sockaddr_in dest_addr_{};
     const AVCodec *codec_;
     AVCodecContext *codec_context_;
-    AVFrame *av_frame;
-    AVPacket *pkt;
+    AVFrame *av_frame_;
+    AVPacket *pkt_;
+    std::string dest_ip_;
 
     int encodeImage(const Image &image)
     {
-        if (img_count % PRINT_INTERVAL == 0) {
-            std::cout << "Format = " << av_get_pix_fmt_name(static_cast<AVPixelFormat>(av_frame->format)) 
+        if (img_count_ % PRINT_INTERVAL == 0) {
+            std::cout << "Format = " << av_get_pix_fmt_name(static_cast<AVPixelFormat>(av_frame_->format)) 
                 << "\ndim = " <<  codec_context_->width << 'x' << codec_context_->height 
                 << "\nstride = " << stride_ 
                 << "\ny_plane size = " << image.data(0).size()
@@ -80,29 +87,29 @@ private:
         const uint8_t *u_plane = image.data(1).data(); 
         const uint8_t *v_plane = image.data(2).data();
         
-        av_frame->data[0] = const_cast<uint8_t *>(y_plane);
-        av_frame->data[1] = const_cast<uint8_t *>(u_plane);
-        av_frame->data[2] = const_cast<uint8_t *>(v_plane);
-        av_frame->data[3] = NULL;
+        av_frame_->data[0] = const_cast<uint8_t *>(y_plane);
+        av_frame_->data[1] = const_cast<uint8_t *>(u_plane);
+        av_frame_->data[2] = const_cast<uint8_t *>(v_plane);
+        av_frame_->data[3] = NULL;
 
-        av_frame->linesize[0] = stride_;
-        av_frame->linesize[1] = stride_ / 2;
-        av_frame->linesize[2] = stride_ / 2;
-        av_frame->linesize[3] = 0;
+        av_frame_->linesize[0] = stride_;
+        av_frame_->linesize[1] = stride_ / 2;
+        av_frame_->linesize[2] = stride_ / 2;
+        av_frame_->linesize[3] = 0;
 
-        av_frame->pts = ++pts_;
+        av_frame_->pts = ++pts_;
 
         int ret;
-        if ((ret = avcodec_send_frame(codec_context_, av_frame)) != 0) {
+        if ((ret = avcodec_send_frame(codec_context_, av_frame_)) != 0) {
             char errstr[64];
             av_strerror(ret, errstr, 64);
             std::cerr << "Error sending to encoder: " << errstr << std::endl;
-            av_frame_free(&av_frame);
+            av_frame_free(&av_frame_);
             avcodec_free_context(&codec_context_);
             return ret;
         }
 
-        if ((ret = avcodec_receive_packet(codec_context_, pkt)) != 0) {
+        if ((ret = avcodec_receive_packet(codec_context_, pkt_)) != 0) {
             char errstr[64];
             av_strerror(ret, errstr, 64);
             std::cerr << "Failed to recieve packet from encoder: " << errstr << std::endl;
@@ -114,8 +121,8 @@ private:
 
     void requestCompleteCB(libcamera::Request *request)
     {
-        bool print = img_count % PRINT_INTERVAL == 0;
-        ++img_count;
+        bool print = img_count_ % PRINT_INTERVAL == 0;
+        ++img_count_;
         
         libcamera::FrameBuffer *frameBuffer = request->buffers().begin()->second;
 
@@ -127,18 +134,20 @@ private:
         auto encodeEnd = std::chrono::high_resolution_clock::now();
 
         if (print) {
-            std::cout << "Encode time: " << std::chrono::duration_cast<std::chrono::milliseconds>(encodeEnd - encodeStart).count() << "ms\t"; 
+            std::cout << "Encode time: " << std::chrono::duration_cast<std::chrono::milliseconds>(encodeEnd - encodeStart).count() << "ms\n"; 
         }
 
         // Send to UDP client
         if (ret == 0) {
-            ssize_t sentBytes = sendto(udp_socket_, pkt->data, pkt->size, 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
-
+            auto sendStart = std::chrono::high_resolution_clock::now();
+            ssize_t sentBytes = sendto(udp_socket_, pkt_->data, pkt_->size, 0, (sockaddr *)(&dest_addr_), sizeof(dest_addr_));
+            auto sendEnd = std::chrono::high_resolution_clock::now();
             if (print) {
+                std::cout <<  "Send time: " << std::chrono::duration_cast<std::chrono::milliseconds>(sendEnd - sendStart).count() << "ms\n";
                 std::cout << "Bytes sent " << sentBytes << "\n\n";
             }
 
-            av_packet_unref(pkt);
+            av_packet_unref(pkt_);
 
             if (sentBytes < 0)
             {
@@ -188,7 +197,7 @@ public:
         codec_context_->time_base = {1, FPS};
         codec_context_->framerate = {FPS, 1};
         codec_context_->gop_size = FPS;
-        codec_context_->max_b_frames = 2;
+        // codec_context_->max_b_frames = 2;
         // codec_context_->refs = 3;
         codec_context_->pix_fmt = AV_PIX_FMT_YUV420P;
         
@@ -220,17 +229,17 @@ public:
             return 1;
         }
 
-        av_frame = av_frame_alloc();
-        av_frame->format = codec_context_->pix_fmt;
-        av_frame->width = codec_context_->width;
-        av_frame->height = codec_context_->height;
-        if ((ret = av_frame_get_buffer(av_frame, 32)) != 0) {
+        av_frame_ = av_frame_alloc();
+        av_frame_->format = codec_context_->pix_fmt;
+        av_frame_->width = codec_context_->width;
+        av_frame_->height = codec_context_->height;
+        if ((ret = av_frame_get_buffer(av_frame_, 32)) != 0) {
             char errstr[64];
             av_strerror(ret, errstr, 64);
             std::cerr << "Couldn't get frame buffer: " << errstr << std::endl;
         }
 
-        pkt = av_packet_alloc();
+        pkt_ = av_packet_alloc();
 
         udp_socket_ = socket(AF_INET, SOCK_DGRAM, 0);
         if (udp_socket_ < 0) {
@@ -240,7 +249,7 @@ public:
         
         dest_addr_.sin_family = AF_INET;
         dest_addr_.sin_port = htons(PORT);
-        if (inet_pton(AF_INET, IP_ADDRESS.c_str(), &dest_addr_.sin_addr) <= 0) {
+        if (inet_pton(AF_INET, dest_ip_.c_str(), &dest_addr_.sin_addr) <= 0) {
             std::cerr << "Error: Invalid IP address!" << std::endl;
             close(udp_socket_);
             return 1;
@@ -347,16 +356,16 @@ public:
             streamNames_[cfg.stream()] = "cam" + std::to_string(camNum) + "-stream" + std::to_string(i);
         }
 
-        sink = std::make_unique<FileSink>(camera_.get(), streamNames_);
-        sink->setFilePattern("captures/server.cpp_#.ppm");
-        ret = sink->configure(*config);
-        if (ret != 0)
+        sink_ = std::make_unique<FileSink>(camera_.get(), streamNames_);
+        sink_->setFilePattern("captures/server.cpp_#.ppm");
+        ret = sink_->configure(*config);
+        if (ret < 0)
         {
             std::cout << "Failed to configure frame sink: " << ret << std::endl;
             return ret;
         }
 
-        sink->requestProcessed.connect(this, &Server::sinkRelease);
+        sink_->requestProcessed.connect(this, &Server::sinkRelease);
 
         auto allocator = std::make_unique<libcamera::FrameBufferAllocator>(camera_);
 
@@ -369,7 +378,7 @@ public:
         libcamera::StreamConfiguration &cfg = config->at(0);
 
         ret = allocator->allocate(cfg.stream());
-        if (ret != 0)
+        if (ret < 0)
         {
             std::cerr << "Can't allocate buffers: " << ret << std::endl;
             return -ENOMEM;
@@ -394,7 +403,7 @@ public:
                 return ret;
             }
 
-            sink->mapBuffer(buffer.get());
+            sink_->mapBuffer(buffer.get());
 
             requests.push_back(std::move(request));
         }
@@ -405,7 +414,7 @@ public:
         camera_->requestCompleted.connect(this, &Server::requestCompleteCB);
 
         ret = camera_->start(&controls);
-        if (ret != 0)
+        if (ret < 0)
         {
             std::cerr << "Failed to start camera: " << ret << std::endl;
             cm->stop();
@@ -453,5 +462,21 @@ public:
 // TODO: Command line arguments
 int main(const int argc, const char *argv[])
 {
-    return Server().run();
+    if (argc <= 1) {
+        std::cerr << "Requires IP argument: '" << argv[0] << " --ip=[IP ADDRESS]'\n"
+            << "Good day sir." << std::endl;
+        return 1;
+    }
+
+    std::string arg1 = argv[1];
+    // TODO: finish Command line arguments
+    size_t split_pos = arg1.find('=');
+    if (split_pos == std::string::npos) {
+        std::cerr << "Invalid argument input: '" << argv[0] << " --ip=[IP ADDRESS]'\n";
+        return 1;
+    }
+
+    std::string ip(arg1.begin() + split_pos + 1, arg1.end());
+    
+    return Server(ip).run();
 }
